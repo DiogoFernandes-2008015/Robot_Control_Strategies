@@ -17,6 +17,7 @@ The repository also includes the post-processing script `anima_simulink_2.m` and
 | `controle_ctc_2dof.slx` | Simulink model of the CTC loop: inverse dynamics, trajectory generator and PD loop in joint coordinates. |
 | `Controle_Adaptativo_1.slx` | Simulink model of the adaptive controller with **error-based adaptation** (adaptation law driven by $\dot{\tilde q}$). |
 | `Controle_Adaptativo_2.slx` | Simulink model of the **Slotine–Li** adaptive controller (adaptation law driven by the **filtered error** $\sigma$). |
+| `Controle_Adaptativo_PPR.slx` | Simulink model of the **Slotine–Li** adaptive controller applied to a Prismatic-Prismatic-Rotational Manipulator. |
 | `Arimoto.py` | Python script implementing **Arimoto's D-type ILC** on a mass–spring–damper system with an unknown periodic disturbance. |
 | `anima_simulink_2.m` | MATLAB script that extracts data from `out.logsout` after a simulation and calls the animation function. |
 | `dinanima_ref.m` | Function that computes forward kinematics at each time step and renders the robot animation over the reference trajectory. |
