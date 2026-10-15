@@ -1,14 +1,15 @@
-# Computed Torque, Adaptive and Learning Control for Robotic Manipulators
+# Computed Torque, Adaptive, Learning and Hybrid Position/Force Control for Robotic Manipulators
 
-This repository contains implementations of model-based, **adaptive** and **learning** control techniques for trajectory tracking in rigid robotic manipulators, developed in **MATLAB/Simulink** and **Python**.
+This repository contains implementations of model-based, **adaptive**, **learning** and **hybrid position/force** control techniques for rigid robotic manipulators, developed in **MATLAB/Simulink** and **Python**.
 
-It covers three families of controllers:
+It covers four families of controllers:
 
 1. **Computed Torque Control (CTC)** for a 2-DOF serial manipulator (feedback linearization with a PD outer loop).
 2. **Adaptive control** for systems with unknown parameters: an *error-based* adaptation law and the **Slotine–Li** algorithm (*filtered-error* adaptation).
 3. **Iterative Learning Control (ILC)** with the **Arimoto D-type** law for repetitive tasks.
+4. **Hybrid position/force control** of a planar 3R manipulator performing a **peg-in-hole insertion** along the $x$ axis.
 
-The repository also includes the post-processing script `anima_simulink_2.m` and the generic graphical routine `dinanima_ref.m` for animating the robot while it executes the reference trajectory.
+The repository also includes the post-processing scripts `anima_simulink_2.m` (generic robot animation over a reference trajectory) and `animar_insercao_xy.m` (animation of the peg-in-hole insertion with contact forces).
 
 ## 📌 Repository Contents
 
@@ -18,9 +19,11 @@ The repository also includes the post-processing script `anima_simulink_2.m` and
 | `Controle_Adaptativo_1.slx` | Simulink model of the adaptive controller with **error-based adaptation** (adaptation law driven by $\dot{\tilde q}$). |
 | `Controle_Adaptativo_2.slx` | Simulink model of the **Slotine–Li** adaptive controller (adaptation law driven by the **filtered error** $\sigma$). |
 | `Controle_Adaptativo_PPR.slx` | Simulink model of the **Slotine–Li** adaptive controller applied to a Prismatic-Prismatic-Rotational Manipulator. |
+| `Controle_Hibrido.slx` | Simulink model of the **hybrid position/force controller** for a planar 3R manipulator inserting a peg into a hole along $x$ (Part 4). |
 | `Arimoto.py` | Python script implementing **Arimoto's D-type ILC** on a mass–spring–damper system with an unknown periodic disturbance. |
 | `anima_simulink_2.m` | MATLAB script that extracts data from `out.logsout` after a simulation and calls the animation function. |
 | `dinanima_ref.m` | Function that computes forward kinematics at each time step and renders the robot animation over the reference trajectory. |
+| `animar_insercao_xy.m` | Function that animates the peg-in-hole insertion in the $xy$ plane, together with $x(t)$ and the contact forces $F_x(t)$, $F_y(t)$. |
 | `README.md` | This document: theory, code description and usage. |
 
 ---
@@ -333,6 +336,84 @@ The learned signal therefore synthesizes the complete inverse dynamics **and can
 
 ---
 
+## 🔩 Part 4 — Hybrid Position/Force Control (`Controle_Hibrido.slx`)
+
+In **compliant-motion tasks** the end-effector is in contact with the environment, so some Cartesian directions must be **position-controlled** (free motion) while the remaining ones must be **force-controlled** (constrained motion). The **hybrid position/force controller** splits the task space with a diagonal **selection matrix** $T_a$ and runs one controller per subspace.
+
+The model implements the classical **peg-in-hole** task: a planar 3R manipulator drives a peg along the $x$ axis into a hole, keeping a desired lateral contact force along $y$.
+
+### 4.1 Task Space and Selection Matrix
+
+The task coordinates are $p = [x\ \ y\ \ \phi]^\top$, with $\phi = q_1 + q_2 + q_3$ the tool orientation, and $J(q)\in\mathbb{R}^{3\times 3}$ is the corresponding Jacobian. The diagonal matrix $T_a$ selects the position-controlled directions, and $I - T_a$ selects the force-controlled ones:
+
+$$
+T_a = \mathrm{diag}(1, 0, 1)
+$$
+
+* $x$ and $\phi$: **position-controlled** (insertion along the hole axis, tool kept aligned);
+* $y$: **force-controlled** (lateral contact force with the hole walls).
+
+### 4.2 Control Law
+
+Position branch (PD in joint space, with the Cartesian error mapped through $J^{-1}$):
+
+$$
+\Delta p = T_a\,(p_d - p), \qquad \Delta q = J^{-1}(q)\,\Delta p, \qquad
+\tau_p = K_p\,\Delta q + K_d\,\Delta\dot q
+$$
+
+Force branch (PI on the force error, mapped to joint torques through $J^\top$):
+
+$$
+\Delta F = (I - T_a)\,(F_d - F), \qquad
+\tau_F = J^\top(q)\left[K_{fp}\,\Delta F + K_{fi}\!\int_0^t \Delta F\,d\tau\right]
+$$
+
+Total command applied to the joints:
+
+$$
+\tau = \tau_p + \tau_F
+$$
+
+### 4.3 Reference Trajectory
+
+The desired position is a **quintic (5th-order) polynomial** interpolation from $p_0$ to $p_f$ in $t_f = 5$ s, with zero velocity and acceleration at both ends:
+
+$$
+p_d(t) = p_0 + s(\tau)\,(p_f - p_0), \qquad s = 10\tau^3 - 15\tau^4 + 6\tau^5, \quad \tau = t/t_f
+$$
+
+### 4.4 Plant and Environment
+
+* **Manipulator dynamics:** planar 3R with $H(q)\ddot q + C(q,\dot q)\dot q + g(q) = \tau + J^\top F_{ext}$, with $C$ built from Christoffel symbols. Links are uniform rods ($m_1 = 1$, $m_2 = 2$, $m_3 = 3$ kg; $I_i = m_i l_i^2/12$; centers of mass at $l_i/2$) and gravity is $g = -9.81$ m/s² along $y$.
+* **Environment (hole walls):** a spring-damper in $y$ and a torsional spring-damper in $\phi$,
+
+$$
+F_y = k_e\,(y - y_{furo}) + b_e\,\dot y, \qquad M_z = k_\theta\,\phi + b_\theta\,\dot\phi, \qquad k_\theta = 250\ \text{N·m/rad},\ b_\theta = 2\ \text{N·m·s/rad}
+$$
+
+  and $F_{ext} = [0\ \ F_y\ \ M_z]^\top$.
+
+### 4.5 Model Structure
+
+| Subsystem | Function |
+| :--- | :--- |
+| `Desire trajectory` | Quintic interpolation $p_d(t)$ between `p0` and `pf`. |
+| `Direct Kinematics` | $p = [x\ y\ \phi]^\top$ from $q$ and `L`. |
+| `Jacobiana` | Returns $J$, $J^{-1}$ and $J^\top$. |
+| `Position Control` | PD with gains `Kp`, `Kd` on $\Delta q$. |
+| `Force Control` | PI with gains `Kfp`, `Kfi` on $\Delta F$. |
+| `Environment` | Contact forces/moments $F_{ext}$ from `ke`, `be`, `y_furo`. |
+| `Subsystem` (dynamics) | Forward dynamics $\ddot q$, double integration to $q$ and $\dot q$. |
+
+**Model parameters (workspace):** `L` (link lengths, e.g. `[0.8; 0.6; 0.4]`), `Ta`, `p0`, `pf`, `F_des`, `ke`, `be`, `y_furo`, `Kp`, `Kd`, `Kfp`, `Kfi`. **Stop time:** 5 s.
+
+**Logged signals:** end-effector position (`out.posicao`) and contact force (`out.forca`), plus `out.tout`, used by `animar_insercao_xy.m`.
+
+> The matrix `Ta` and the gains must be defined in the base workspace before running the model (see [How to Run](#-how-to-run)).
+
+---
+
 ## 🎬 Post-Processing and Animation
 
 ### 1. Main Animation Script (`anima_simulink_2.m`)
@@ -385,12 +466,53 @@ dinanima_ref(tdh0, info, qout, tout, rastro, ref)
 * 🔴 **Actual trail:** continuous red curve (`r-`) traced by the end-effector up to time $t$.
 * 🔵 **Robot structure:** blue lines with black joint markers showing the links and configuration at each frame.
 
+### 3. Function `animar_insercao_xy.m` (hybrid control)
+
+Animates the **peg-in-hole insertion** from the hybrid-control simulation, in real time (30 FPS), with dynamic axis framing so the peg never leaves the screen.
+
+```matlab
+animar_insercao_xy(t, pos, F)             % hole placed at the end of the motion
+animar_insercao_xy(t, pos, F, x_entrada)  % hole entrance at x = x_entrada (m)
+```
+
+| Parameter | Type / Size | Description |
+| :--- | :--- | :--- |
+| `t` | $N_t \times 1$ vector | Simulation time instants (`out.tout`). |
+| `pos` | $N_t \times 2$ matrix | End-effector (peg tip) position $[x, y]$ (`out.posicao.Data`). Converted from mm to m automatically if $\max|x| > 10$. |
+| `F` | $N_t \times 2$ matrix | Contact force $[F_x, F_y]$ in N (`out.forca.Data`). |
+| `x_entrada` | scalar *(optional)* | $x$ coordinate of the hole entrance. Default: `max(pos(:,1)) - prof_furo`. |
+
+Input data are squeezed, transposed if needed (`2 x N` → `N x 2`), and cleaned of repeated time stamps (`unique`) before resampling at 30 FPS with `interp1`.
+
+**Fixed geometry (editable at the top of the function):**
+
+| Variable | Value | Meaning |
+| :--- | :--- | :--- |
+| `prof_furo` | 0.10 m | Hole depth (along $x$). |
+| `largura_furo` | 0.04 m | Hole opening (along $y$), centered at $y = 0$. |
+| `largura_pino` | 0.036 m | Peg width (along $y$) — 2 mm of clearance per side. |
+| `comprimento_pino` | 0.10 m | Peg length (along $x$); the tip is the end-effector position. |
+| `escala_forca` | 0.001 m/N | Scale of the force arrow. |
+
+**Window layout:**
+* **Left panel:** peg (green rectangle), hole walls (gray), tip trajectory (blue dotted), contact-force vector (red arrow) and a status text with the current phase — *Aproximação em X*, *Inserção (Profundidade = …)* or *Contato com Fundo / Ajuste de Força Fx*.
+* **Top right:** $x(t)$ with a marker following the animation.
+* **Bottom right:** $F_x(t)$ and $F_y(t)$, with a marker following $F_x$.
+
+```matlab
+% After running Controle_Hibrido.slx:
+animar_insercao_xy(out.tout, out.posicao.Data, out.forca.Data);
+
+% Specifying the hole entrance explicitly:
+animar_insercao_xy(out.tout, out.posicao.Data, out.forca.Data, 1.10);
+```
+
 ---
 
 ## 🚀 How to Run
 
 ### Prerequisites
-* **MATLAB** (R2020b or later), **Simulink** and the **Symbolic Math Toolbox** (CTC and adaptive models, animation)
+* **MATLAB** (R2020b or later; the hybrid-control model was saved with **R2024b**), **Simulink** and the **Symbolic Math Toolbox** (CTC and adaptive models, animation)
 * **Python 3** with `numpy` and `matplotlib` (Arimoto ILC)
 
 ### Steps
@@ -424,6 +546,23 @@ dinanima_ref(tdh0, info, qout, tout, rastro, ref)
    python Arimoto.py
    ```
 
+6. **Hybrid position/force control:** define the workspace variables, simulate and animate. The values below are placeholders to be tuned for your setup; `L` and `Ta` follow the model defaults.
+   ```matlab
+   L      = [0.8; 0.6; 0.4];     % link lengths [m]
+   Ta     = diag([1 0 1]);       % x and phi: position | y: force
+   p0     = [0.9; 0.2; 0];       % initial pose  [x; y; phi]  (placeholder)
+   pf     = [1.1; 0.0; 0];       % final pose    [x; y; phi]  (placeholder)
+   y_furo = 0;                   % hole center line [m]
+   ke = 1e4; be = 50;            % environment stiffness [N/m] and damping [N.s/m] (placeholders)
+   F_des  = [0; 0; 0];           % desired contact force
+   Kp = 400*eye(3);  Kd = 40*eye(3);     % position PD  (placeholders)
+   Kfp = 1;  Kfi = 5;                    % force PI     (placeholders)
+
+   out = sim('Controle_Hibrido');        % stop time: 5 s
+   animar_insercao_xy(out.tout, out.posicao.Data, out.forca.Data);
+   ```
+   Adjust the variable names/sizes to match the constants and gain blocks of your copy of the model.
+
 ---
 
 ## 📚 References
@@ -434,3 +573,4 @@ dinanima_ref(tdh0, info, qout, tout, rastro, ref)
 * SLOTINE, J.-J. E.; LI, W. On the adaptive control of robot manipulators. *The International Journal of Robotics Research*, 6(3), 49–59, 1987.
 * ARIMOTO, S.; KAWAMURA, S.; MIYAZAKI, F. Bettering operation of robots by learning. *Journal of Robotic Systems*, 1(2), 123–140, 1984.
 * LUH, J. Y.; WALKER, M. W.; PAUL, R. P. (1980). On-line computational scheme for mechanical manipulators. *ASME Journal of Dynamic Systems, Measurement, and Control*, 102(2), 69–76.
+* RAIBERT, M. H.; CRAIG, J. J. Hybrid position/force control of manipulators. *ASME Journal of Dynamic Systems, Measurement, and Control*, 103(2), 126–133, 1981.
